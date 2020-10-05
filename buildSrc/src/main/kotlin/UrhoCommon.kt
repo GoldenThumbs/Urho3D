@@ -28,6 +28,8 @@ import java.io.File
 const val ndkSideBySideVersion = "21.3.6528147"
 const val cmakeVersion = "3.17.3+"
 
+const val buildStagingDir = ".cxx"
+
 /**
  * Apply Urho3D custom plugin for the given platform.
  *

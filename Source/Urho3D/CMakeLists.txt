@@ -549,9 +549,10 @@ endif ()
 install (FILES ${CMAKE_CURRENT_BINARY_DIR}/Urho3D.pc DESTINATION ${DEST_PKGCONFIG_DIR} ${RENAME})
 
 # Define post build steps
-if (ANDROID AND GRADLE_BUILD_DIR)
+if (ANDROID AND BUILD_STAGING_DIR)
     # Copy the library to URHO3D_HOME directory
-    set (ABI_LIB_DIR ${GRADLE_BUILD_DIR}/tree/${CMAKE_BUILD_TYPE}/${ANDROID_ABI}/lib)
+    string (TOLOWER ${CMAKE_BUILD_TYPE} config)
+    set (ABI_LIB_DIR ${BUILD_STAGING_DIR}/cmake/${config}/${ANDROID_ABI}/lib)
     file (MAKE_DIRECTORY ${ABI_LIB_DIR})
     # Workaround execute_process does not support generator expression
     if (URHO3D_LIB_TYPE STREQUAL STATIC)

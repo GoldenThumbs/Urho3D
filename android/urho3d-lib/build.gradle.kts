@@ -43,14 +43,9 @@ android {
             cmake {
                 arguments.apply {
                     System.getenv("ANDROID_CCACHE")?.let { add("-D ANDROID_CCACHE=$it") }
-                    add("-D GRADLE_BUILD_DIR=$buildDir")
-                    // In order to get clean module segregation, always exclude player/samples from AAR
-                    val excludes = listOf("URHO3D_PLAYER", "URHO3D_SAMPLES")
-                    addAll(excludes.map { "-D $it=0" })
+                    add("-D BUILD_STAGING_DIR=$projectDir/$buildStagingDir")
                     // Pass along matching Gradle properties (higher precedence) or env-vars as CMake build options
-                    val vars = project.file("../../script/.build-options")
-                        .readLines()
-                        .filterNot { excludes.contains(it) }
+                    val vars = project.file("../../script/.build-options").readLines()
                     addAll(vars
                         .filter { project.hasProperty(it) }
                         .map { "-D $it=${project.property(it)}" }
@@ -78,16 +73,15 @@ android {
     buildTypes {
         named("release") {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     externalNativeBuild {
         cmake {
             version = cmakeVersion
             path = project.file("../../CMakeLists.txt")
-
             // Make it explicit as one of the task needs to know the exact path and derived from it
-            setBuildStagingDirectory(".cxx")
+            setBuildStagingDirectory(buildStagingDir)
         }
     }
     sourceSets {
@@ -98,7 +92,7 @@ android {
 }
 
 dependencies {
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(kotlin("stdlib-jdk8", embeddedKotlinVersion))
     implementation("com.getkeepsafe.relinker:relinker:1.4.1")
     testImplementation("junit:junit:4.13")
@@ -106,39 +100,14 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.3.0")
 }
 
-afterEvaluate {
-    // Part of the our external native build tree resided in Gradle buildDir
-    // When the buildDir is cleaned then we need a way to re-configure that part back
-    // It is achieved by ensuring that CMake configuration phase is rerun
-    tasks {
-        "clean" {
-            doLast {
-                android.externalNativeBuild.cmake.path?.touch()
-            }
-        }
-    }
-
-    // This is a hack - workaround Android plugin for Gradle not providing way to bundle extra "stuffs"
-    android.buildTypes.forEach { buildType ->
-        val config = buildType.name.capitalize()
-        tasks {
-            register<Zip>("zipBuildTree$config") {
-                archiveClassifier.set(buildType.name)
-                archiveExtension.set("aar")
-                dependsOn("zipBuildTreeConfigurer$config", "bundle${config}Aar")
-                from(zipTree(getByName("bundle${config}Aar").outputs.files.first()))
-            }
-            register<Task>("zipBuildTreeConfigurer$config") {
-                val externalNativeBuildDir = File(buildDir, "tree/$config")
-                doLast {
-                    val zipTask = getByName<Zip>("zipBuildTree$config")
-                    externalNativeBuildDir.list()?.forEach { abi ->
-                        listOf("include", "lib").forEach {
-                            zipTask.from(File(externalNativeBuildDir, "$abi/$it")) {
-                                into("tree/$config/$abi/$it")
-                            }
-                        }
-                    }
+android.libraryVariants.whenObjectAdded {
+    val config = name
+    packageLibraryProvider.get().apply {
+        // Customize bundle task to also zip the headers; and the static archive (for STATIC lib type)
+        File(android.externalNativeBuild.cmake.buildStagingDirectory, "cmake/$config").list()?.forEach { abi ->
+            listOf("include", "lib").forEach {
+                from(File(android.externalNativeBuild.cmake.buildStagingDirectory, "cmake/$config/$abi/$it")) {
+                    into("jni/$abi/$it")
                 }
             }
         }
@@ -146,9 +115,17 @@ afterEvaluate {
 }
 
 tasks {
+    register<Delete>("cleanAll") {
+        dependsOn("clean")
+        delete = setOf(android.externalNativeBuild.cmake.buildStagingDirectory)
+    }
     register<Jar>("sourcesJar") {
         archiveClassifier.set("sources")
         from(android.sourceSets.getByName("main").java.srcDirs)
+    }
+    register<Zip>("documentationZip") {
+        archiveClassifier.set("documentation")
+        dependsOn("makeDoc")
     }
     register<Exec>("makeDoc") {
         // Ignore the exit status on Windows host system because Doxygen may not return exit status correctly on Windows
@@ -156,16 +133,12 @@ tasks {
         standardOutput = NullOutputStream.INSTANCE
         args("--build", ".", "--target", "doc")
         dependsOn("makeDocConfigurer")
-        mustRunAfter("zipBuildTreeDebug")
-    }
-    register<Zip>("documentationZip") {
-        archiveClassifier.set("documentation")
-        dependsOn("makeDoc")
     }
     register<Task>("makeDocConfigurer") {
+        dependsOn("generateJsonModelRelease")
         doLast {
-            val docABI = File(buildDir, "tree/Debug").list()?.first()
-            val buildTree = File(android.externalNativeBuild.cmake.buildStagingDirectory, "cmake/debug/$docABI")
+            val abi = File(android.externalNativeBuild.cmake.buildStagingDirectory, "cmake/release").list()!!.first()
+            val buildTree = File(android.externalNativeBuild.cmake.buildStagingDirectory, "cmake/release/$abi")
             named<Exec>("makeDoc") {
                 // This is a hack - expect the first line to contain the path to the CMake executable
                 executable = File(buildTree, "build_command.txt").readLines().first().split(":").last().trim()
@@ -189,9 +162,7 @@ publishing {
                 artifactId = "$artifactId-${(project.property("ANDROID_ABI") as String).replace(',', '-')}"
             }
             afterEvaluate {
-                android.buildTypes.forEach {
-                    artifact(tasks["zipBuildTree${it.name.capitalize()}"])
-                }
+                from(components["release"])
             }
             artifact(tasks["sourcesJar"])
             artifact(tasks["documentationZip"])

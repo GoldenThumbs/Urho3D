@@ -24,7 +24,6 @@ plugins {
     id("com.android.application")
     kotlin("android")
     kotlin("android.extensions")
-    urho3d("android")
 }
 
 android {
@@ -41,12 +40,15 @@ android {
             cmake {
                 arguments.apply {
                     System.getenv("ANDROID_CCACHE")?.let { add("-D ANDROID_CCACHE=$it") }
-                    add("-D GRADLE_BUILD_DIR=${findProject(":android:urho3d-lib")?.buildDir}")
-                    // Only enable 'URHO3D_PLAYER' build option for 'STATIC' lib type to reduce the spacetime requirement
+                    add("-D BUILD_STAGING_DIR=${findProject(":android:urho3d-lib")!!.projectDir}/$buildStagingDir")
                     add("-D URHO3D_PLAYER=1")
+                    // Skip building samples for 'STATIC' lib type to reduce the spacetime requirement
                     add("-D URHO3D_SAMPLES=${if (project.libraryType == "STATIC") "0" else "1"}")
                     // Pass along matching Gradle properties (higher precedence) or env-vars as CMake build options
-                    val vars = project.file("../../script/.build-options").readLines()
+                    val excludes = listOf("URHO3D_PLAYER", "URHO3D_SAMPLES")
+                    val vars = project.file("../../script/.build-options")
+                        .readLines()
+                        .filterNot { excludes.contains(it) }
                     addAll(vars
                         .filter { project.hasProperty(it) }
                         .map { "-D $it=${project.property(it)}" }
@@ -73,7 +75,7 @@ android {
     buildTypes {
         named("release") {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     lintOptions {
@@ -83,14 +85,19 @@ android {
         cmake {
             version = cmakeVersion
             path = project.file("CMakeLists.txt")
+            // Make it explicit as one of the task needs to know the exact path and derived from it
+            setBuildStagingDirectory(buildStagingDir)
         }
     }
 }
 
 dependencies {
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(project(":android:urho3d-lib"))
     implementation(kotlin("stdlib-jdk8", embeddedKotlinVersion))
+    implementation("androidx.core:core-ktx:1.3.2")
+    implementation("androidx.appcompat:appcompat:1.2.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.0.1")
     testImplementation("junit:junit:4.13")
     androidTestImplementation("androidx.test:runner:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.3.0")
@@ -100,13 +107,6 @@ dependencies {
 evaluationDependsOn(":android:urho3d-lib")
 
 afterEvaluate {
-    tasks {
-        "clean" {
-            doLast {
-                android.externalNativeBuild.cmake.path?.touch()
-            }
-        }
-    }
     android.buildTypes.forEach {
         val config = it.name.capitalize()
         tasks {
@@ -114,5 +114,12 @@ afterEvaluate {
                 mustRunAfter(":android:urho3d-lib:externalNativeBuild$config")
             }
         }
+    }
+}
+
+tasks {
+    register<Delete>("cleanAll") {
+        dependsOn("clean")
+        delete = setOf(android.externalNativeBuild.cmake.buildStagingDirectory)
     }
 }
