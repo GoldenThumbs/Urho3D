@@ -1,0 +1,7 @@
+<renderpath>
+    <command type="quad" tag="SSAO" vs="SSAO" ps="SSAO" blend="multiply">
+        <texture unit="0" name="Textures/Random.png" />
+        <texture unit="1" name="depth" />
+        <parameter name="NoiseScale" value="4 4" />
+    </command>
+</renderpath>

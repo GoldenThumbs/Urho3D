@@ -1,0 +1,7 @@
+<texture>
+    <address mode="wrap" />
+    <quality low="0" />
+    <filter mode="nearest" anisotropy="0" />
+    <mipmap enable="false" />
+    <srgb enable="false" />
+</texture>

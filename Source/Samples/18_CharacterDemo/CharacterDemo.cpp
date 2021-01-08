@@ -30,6 +30,7 @@
 #include <Urho3D/Graphics/Material.h>
 #include <Urho3D/Graphics/Octree.h>
 #include <Urho3D/Graphics/Renderer.h>
+#include <Urho3D/Graphics/RenderPath.h>
 #include <Urho3D/Graphics/Zone.h>
 #include <Urho3D/Input/Controls.h>
 #include <Urho3D/Input/Input.h>
@@ -75,7 +76,7 @@ void CharacterDemo::Start()
     CreateCharacter();
 
     // Create the UI content
-    CreateInstructions();
+    //CreateInstructions();
 
     // Subscribe to necessary events
     SubscribeToEvents();
@@ -87,6 +88,7 @@ void CharacterDemo::Start()
 void CharacterDemo::CreateScene()
 {
     auto* cache = GetSubsystem<ResourceCache>();
+    auto* renderer = GetSubsystem<Renderer>();
 
     scene_ = new Scene(context_);
 
@@ -99,7 +101,7 @@ void CharacterDemo::CreateScene()
     cameraNode_ = new Node(context_);
     auto* camera = cameraNode_->CreateComponent<Camera>();
     camera->SetFarClip(300.0f);
-    GetSubsystem<Renderer>()->SetViewport(0, new Viewport(context_, scene_, camera));
+    //GetSubsystem<Renderer>()->SetViewport(0, new Viewport(context_, scene_, camera));
 
     // Create static scene content. First create a zone for ambient lighting and fog control
     Node* zoneNode = scene_->CreateChild("Zone");
@@ -176,6 +178,14 @@ void CharacterDemo::CreateScene()
         auto* shape = objectNode->CreateComponent<CollisionShape>();
         shape->SetBox(Vector3::ONE);
     }
+
+    SharedPtr<Viewport> viewport(new Viewport(context_, scene_, camera));
+    renderer->SetViewport(0, viewport);
+
+    RenderPath* effectRenderPath = new RenderPath();
+    effectRenderPath->Load(cache->GetResource<XMLFile>("RenderPaths/DeferredSSAO.xml"));
+    //effectRenderPath->Append(cache->GetResource<XMLFile>("PostProcess/SSAO.xml"));
+    viewport->SetRenderPath(effectRenderPath);
 }
 
 void CharacterDemo::CreateCharacter()
