@@ -106,7 +106,7 @@ void CharacterDemo::CreateScene()
     // Create static scene content. First create a zone for ambient lighting and fog control
     Node* zoneNode = scene_->CreateChild("Zone");
     auto* zone = zoneNode->CreateComponent<Zone>();
-    zone->SetAmbientColor(Color(0.15f, 0.15f, 0.15f));
+    zone->SetAmbientColor(Color(0.4f, 0.4f, 0.4f));
     zone->SetFogColor(Color(0.5f, 0.5f, 0.7f));
     zone->SetFogStart(100.0f);
     zone->SetFogEnd(300.0f);
@@ -128,7 +128,7 @@ void CharacterDemo::CreateScene()
     floorNode->SetScale(Vector3(200.0f, 1.0f, 200.0f));
     auto* object = floorNode->CreateComponent<StaticModel>();
     object->SetModel(cache->GetResource<Model>("Models/Box.mdl"));
-    object->SetMaterial(cache->GetResource<Material>("Materials/Stone.xml"));
+    object->SetMaterial(cache->GetResource<Material>("Materials/StoneTiled.xml"));
 
     auto* body = floorNode->CreateComponent<RigidBody>();
     // Use collision layer bit 2 to mark world scenery. This is what we will raycast against to prevent camera from going
@@ -182,10 +182,10 @@ void CharacterDemo::CreateScene()
     SharedPtr<Viewport> viewport(new Viewport(context_, scene_, camera));
     renderer->SetViewport(0, viewport);
 
-    RenderPath* effectRenderPath = new RenderPath();
-    effectRenderPath->Load(cache->GetResource<XMLFile>("RenderPaths/DeferredSSAO.xml"));
-    //effectRenderPath->Append(cache->GetResource<XMLFile>("PostProcess/SSAO.xml"));
-    viewport->SetRenderPath(effectRenderPath);
+    effectRenderPath_ = new RenderPath();
+    effectRenderPath_->Load(cache->GetResource<XMLFile>("RenderPaths/DeferredSSAO.xml"));
+    effectRenderPath_->Append(cache->GetResource<XMLFile>("PostProcess/FXAA3.xml"));
+    viewport->SetRenderPath(effectRenderPath_);
 }
 
 void CharacterDemo::CreateCharacter()
@@ -255,6 +255,7 @@ void CharacterDemo::CreateInstructions()
 
 void CharacterDemo::SubscribeToEvents()
 {
+    SubscribeToEvent(E_RENDERUPDATE, URHO3D_HANDLER(CharacterDemo, HandleRenderUpdate));
     // Subscribe to Update event for setting the character controls before physics simulation
     SubscribeToEvent(E_UPDATE, URHO3D_HANDLER(CharacterDemo, HandleUpdate));
 
@@ -263,6 +264,23 @@ void CharacterDemo::SubscribeToEvents()
 
     // Unsubscribe the SceneUpdate event from base class as the camera node is being controlled in HandlePostUpdate() in this sample
     UnsubscribeFromEvent(E_SCENEUPDATE);
+}
+
+void CharacterDemo::HandleRenderUpdate(StringHash eventType, VariantMap& eventData)
+{
+    using namespace RenderUpdate;
+
+    auto* camera = cameraNode_->GetComponent<Camera>();
+    Matrix4 projection = camera->GetProjection();
+    float tanHalfFovX = 1.0f/projection.m00_;
+    float tanHalfFovY = 1.0f/projection.m11_;
+    Vector4 projInfo;
+    projInfo.x_ = tanHalfFovX * 2.0f;
+    projInfo.y_ = tanHalfFovY *-2.0f;
+    projInfo.z_ =-tanHalfFovX;
+    projInfo.w_ = tanHalfFovY;
+
+    effectRenderPath_->SetShaderParameter("ProjInfo", projInfo);
 }
 
 void CharacterDemo::HandleUpdate(StringHash eventType, VariantMap& eventData)

@@ -57,6 +57,7 @@ public:
     void Start() override;
 
 protected:
+    SharedPtr<RenderPath> effectRenderPath_;
     /// Return XML patch instructions for screen joystick layout for a specific sample app, if any.
     String GetScreenJoystickPatchString() const override { return
         "<patch>"
@@ -112,6 +113,8 @@ private:
     void CreateInstructions();
     /// Subscribe to necessary events.
     void SubscribeToEvents();
+
+    void HandleRenderUpdate(StringHash eventType, VariantMap& eventData);
     /// Handle application update. Set controls to character.
     void HandleUpdate(StringHash eventType, VariantMap& eventData);
     /// Handle application post-update. Update camera position after character has moved.

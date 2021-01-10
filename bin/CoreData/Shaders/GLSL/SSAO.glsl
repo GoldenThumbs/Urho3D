@@ -1,9 +1,13 @@
+#version 450
+
 #include "Uniforms.glsl"
 #include "Samplers.glsl"
 #include "Transform.glsl"
 #include "ScreenPos.glsl"
+#include "Constants.glsl"
 
 varying highp vec2 vScreenPos;
+//varying vec4 vProjInfo;
 
 #ifdef COMPILEVS
 
@@ -13,6 +17,14 @@ void VS()
     vec3 worldPos = GetWorldPos(modelMatrix);
     gl_Position = GetClipPos(worldPos);
     vScreenPos = GetScreenPosPreDiv(gl_Position);
+
+    //mat4 projMat = cViewInv * cViewProj;
+    //float tan_half_fov_x = 1/projMat[0][0];
+    //float tan_half_fov_y = 1/projMat[1][1];
+    //vProjInfo.x = tan_half_fov_x * 2.0;
+    //vProjInfo.y = tan_half_fov_y *-2.0;
+    //vProjInfo.z =-tan_half_fov_x;
+    //vProjInfo.w = tan_half_fov_y;
 }
 
 #endif
@@ -22,14 +34,21 @@ void VS()
 uniform sampler2D sRnd0; // Random noise
 uniform sampler2D sDep1; // Depth Buffer
 uniform vec2 cNoiseScale;
+uniform vec4 cProjInfo;
 
 float camClip = cFarClipPS - cNearClipPS;
 
-const vec2 kernel[4] = vec2[](
-    vec2( 1, 0),
-    vec2( 0, 1),
-    vec2(-1, 0),
-    vec2( 0,-1)
+const int samples = 8;
+
+const vec2 kernel[8] = vec2[](
+    vec2(  1, 0),
+    vec2(  0, 1),
+    vec2( -1, 0),
+    vec2(  0,-1),
+    vec2( 0.5,0),
+    vec2(0, 0.5),
+    vec2(-0.5,0),
+    vec2(0,-0.5)
 );
 
 float GetDepth(sampler2D depthSampler, vec2 uv)
@@ -41,92 +60,128 @@ float GetDepth(sampler2D depthSampler, vec2 uv)
     #endif
 }
 
-// Port from: https://github.com/jsj2008/Zombie-Blobs/blob/278e16229ccb77b2e11d788082b2ccebb9722ace/src/postproc.fs
-
-// see T M?ller, 1999: Efficiently building a matrix to rotate one vector to another
-mat3 rotateNormalVecToAnother(vec3 f, vec3 t) {
-    vec3 v = cross(f, t);
-    float c = dot(f, t);
-    float h = (1.0 - c) / (1.0 - c * c);
-    return mat3(c + h * v.x * v.x, h * v.x * v.y + v.z, h * v.x * v.z - v.y,
-                h * v.x * v.y - v.z, c + h * v.y * v.y, h * v.y * v.z + v.x,
-                h * v.x * v.z + v.y, h * v.y * v.z - v.x, c + h * v.z * v.z);
+vec3 GetPosFromDepth(float depth, vec2 uv)
+{
+    float eyeZ = depth * camClip;
+    vec2 tmp = uv;
+    tmp.y = 1-tmp.y;
+    vec3 p = vec3((cProjInfo.xy * tmp + cProjInfo.zw) * eyeZ, eyeZ);
+    return p;
 }
 
-vec3 normal_from_depth(float depth, highp vec2 texcoords) {
-    // One pixel: 0.001 = 1 / 1000 (pixels)
-    vec2 offset1 = vec2(0.0, cGBufferInvSize.y);
-    vec2 offset2 = vec2(cGBufferInvSize.x, 0.0);
+vec3 GetPos(vec2 uv)
+{
+    return GetPosFromDepth(GetDepth(sDep1, uv), uv);
+}
 
-    float depth1 = GetDepth(sDep1, texcoords + offset1);
-    float depth2 = GetDepth(sDep1, texcoords + offset2);
-    
-    vec3 p1 = vec3(offset1, depth1 - depth);
-    vec3 p2 = vec3(offset2, depth2 - depth);
-    
-    highp vec3 normal = cross(p1, p2);
-    normal.z = -normal.z;
-    
-    return normalize(normal);
+vec3 MinDiff(vec3 P, vec3 Pr, vec3 Pl)
+{
+  vec3 V1 = Pr - P;
+  vec3 V2 = P - Pl;
+  return (dot(V1,V1) < dot(V2,V2)) ? V1 : V2;
+}
+
+vec3 GenNrm(vec3 p0, vec2 texcoord)
+{
+
+    vec3 p1X = GetPos(texcoord+vec2(cGBufferInvSize.x, 0.0));
+    vec3 p2X = GetPos(texcoord-vec2(cGBufferInvSize.x, 0.0));
+
+    vec3 p1Y = GetPos(texcoord+vec2(0.0, cGBufferInvSize.y));
+    vec3 p2Y = GetPos(texcoord-vec2(0.0, cGBufferInvSize.y));
+
+    return -normalize(cross(MinDiff(p0, p1X, p2X), MinDiff(p0, p1Y, p2Y)));
+}
+
+vec2 GetCoord(int i, float radius, vec2 texcoord, vec2 random)
+{
+    vec2 ray = reflect(kernel[i], random);
+
+    return texcoord + radius * ray;
+}
+
+float GenAO(vec2 texcoord, vec3 p, vec3 n, float radius)
+{
+    vec3 diff = GetPos(texcoord) - p;
+    float distSqr = dot(diff, diff);
+    float invLength = inversesqrt(distSqr);
+
+    float angle = dot(n, diff) * invLength;
+
+    float f = 1.0/(1.0+distSqr);
+    //float edge = step(0.0, texcoord.x) * step(0.0, 1.0 - texcoord.x) * step(0.0, texcoord.y) * step(0.0, 1.0 - texcoord.y);
+
+    return max(0, angle) * f;
+}
+
+const float KERNEL_RADIUS = 6;
+uniform vec2 cBlurDir;
+
+float Blur(vec2 texcoord, float baseD, float r, inout float w_total)
+{
+    float ao = texture2D(sDiffMap, texcoord).r;
+    float d = GetDepth(sDep1, texcoord) * camClip;
+
+    const float BlurSigma = float(KERNEL_RADIUS) * 0.5;
+    const float BlurFalloff = 1.0 / (2.0*BlurSigma*BlurSigma);
+
+    float ddiff = max(0.001, 0.5 - abs(baseD - d) * 2.0);
+    float w = exp2(-r*r*BlurFalloff) * ddiff;
+    w_total += w;
+
+    return ao*w;
 }
 
 void PS()
 {
-    const float aoStrength = 1.0;
-    const float radius = 0.3;
-    
-    highp vec2 tx = vScreenPos;
-    highp vec2 px = cGBufferInvSize;
-    
-    float depth = GetDepth(sDep1, vScreenPos);
-    vec3  normal = normal_from_depth(depth, vScreenPos);
-    vec2 random = texture2D(sRnd0, vScreenPos / (cNoiseScale * cGBufferInvSize)).xy * 2.0 - 1.0;
-    
-    // radius is in world space unit
-    float rad = radius / depth;
-    float zRange = radius / camClip;
-    
-    // calculate inverse matrix of the normal by rotate it to identity
-    mat3 InverseNormalMatrix = rotateNormalVecToAnother(normal, vec3(0.0, 0.0, 1.0));
-    
-    // result of line sampling
-    // See Loos & Sloan: Volumetric Obscurance
-    // http://www.cs.utah.edu/~loos/publications/vo/vo.pdf
-    float hemi = 0.0;
-    float maxi = 0.0;
-    
-    for (int i = 0; i < 4; ++i) {
-        // make virtual sphere of unit volume, more closer to center, more ambient occlusion contributions
-        vec2 ray = reflect(kernel[i], random.xy);
-        float rx = 0.3 * ray.x;
-        float ry = 0.3 * ray.y;
-        float rz = sqrt(1.0 - rx * rx - ry * ry);
-        
-        highp vec3 screenCoord = vec3(ray.x * px.x, ray.y * px.y, 0.0);
-        // 0.25 times smaller when farest, 5.0 times bigger when nearest.
-        highp vec2 coord = tx + rad * screenCoord.xy;
-        // fetch depth from texture
-        screenCoord.z = GetDepth(sDep1, coord);
-        // move to origin
-        screenCoord.z -= depth;
+    #if defined(GEN_AO)
+        const float aoStrength = 3.0;
+        const float radius = 0.5;
 
-        if (screenCoord.z * radius < -zRange) continue;
+        highp vec2 tx = vScreenPos;
 
-        // Transform to normal-oriented hemisphere space
-        highp vec3 localCoord = InverseNormalMatrix * screenCoord;
-        // ralative depth in the world space radius
-        float dr = localCoord.z / zRange;
-        // calculate contribution
-        float v = clamp(rz + dr * aoStrength, 0.0, 2.0 * rz);
+        float depth = GetDepth(sDep1, vScreenPos);
+        vec3 pos = GetPosFromDepth(depth, vScreenPos);
+        vec3 normal = GenNrm(pos, vScreenPos);
+        vec2 random = texture2D(sRnd0, vScreenPos / (cNoiseScale * cGBufferInvSize)).xy * 2.0 - 1.0;
 
-        maxi += rz;
-        hemi += v;
-    }
+        if( depth >= 1.0 ) {
+		    // no SSAO on the skybox !
+		    gl_FragColor = vec4(1.0);
+		    return;
+        }
 
-    float ao = clamp(hemi/maxi, 0.0, 1.0);
+        float rad = radius / pos.z;
 
-    gl_FragColor.rgb = vec3(ao);
-    gl_FragColor.a = 1.0;
+        float ao = 0.0;
+
+        for (int i = 0; i < samples; i++) {
+            vec2 coord = GetCoord(i, rad, tx, random);
+
+            ao += GenAO(coord, pos, normal, radius);
+        }
+
+        ao = 1.0-clamp(ao/float(samples), 0.0, 1.0);
+        ao = pow(ao, aoStrength);
+
+        gl_FragColor.rgb = vec3(ao);
+        gl_FragColor.a = 1.0;
+    #else
+        float ao = texture2D(sDiffMap, vScreenPos).r;
+        float depth = GetDepth(sDep1, vScreenPos) * camClip;
+
+        float w_total = 1.0;
+
+        for (lowp float r = 1; r <= KERNEL_RADIUS; ++r)
+        {
+            vec2 offset = cBlurDir * cGBufferInvSize * r;
+            ao += Blur(vScreenPos+offset, depth, r, w_total);
+            ao += Blur(vScreenPos-offset, depth, r, w_total); 
+        }
+
+        gl_FragColor.rgb = vec3(ao/w_total);
+        gl_FragColor.a = 1.0;
+    #endif
 }
 
 #endif
