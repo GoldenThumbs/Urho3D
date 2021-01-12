@@ -3,5 +3,6 @@
         <texture unit="0" name="Textures/Random.png" />
         <texture unit="1" name="depth" />
         <parameter name="NoiseScale" value="4 4" />
+        <parameter name="ProjInfo" />
     </command>
 </renderpath>

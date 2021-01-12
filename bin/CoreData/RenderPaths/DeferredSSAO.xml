@@ -19,15 +19,18 @@
         <parameter name="NoiseScale" value="4 4" />
         <parameter name="ProjInfo" />
     </command>
-    <command type="quad" tag="SSAO" vs="SSAO" ps="SSAO" output="blur">
+    <command type="quad" tag="SSAO" vs="SSAO" ps="SSAO" psdefines="GEN_BLUR" output="blur">
         <texture unit="0" name="ao" />
         <texture unit="1" name="depth" />
         <parameter name="BlurDir" value="1 0" />
     </command>
-    <command type="quad" tag="SSAO" vs="SSAO" ps="SSAO" output="viewport" blend="multiply">
+    <command type="quad" tag="SSAO" vs="SSAO" ps="SSAO" psdefines="GEN_BLUR" output="ao">
         <texture unit="0" name="blur" />
         <texture unit="1" name="depth" />
         <parameter name="BlurDir" value="0 1" />
+    </command>
+    <command type="quad" tag="SSAO" vs="SSAO" ps="SSAO" output="viewport" blend="multiply">
+        <texture unit="0" name="ao" />
     </command>
 
     <command type="lightvolumes" vs="DeferredLight" ps="DeferredLight">
